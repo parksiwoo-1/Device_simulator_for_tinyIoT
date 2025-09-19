@@ -19,7 +19,10 @@ The simulator follows the **oneM2M standard** and supports both **HTTP** and **M
 
 ## Features
 
-- **Unified control** via `coordination.py`
+- You can also use simulator.py via a script called coordination.py, which controls tinyIoT and the simulator.
+```bash
+  https://github.com/parksiwoo-1/Coordination_scrip_for_tinyIoT
+```
 - **Temperature and humidity simulation**
 - **Protocol**: Choose between **HTTP** or **MQTT**
 - **Mode**
