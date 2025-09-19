@@ -1,6 +1,5 @@
 # Device_simulator_for_tinyIoT
 
-# Device Simulator for tinyIoT
 
 ## Overview
 
