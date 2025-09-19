@@ -37,6 +37,7 @@ The simulator follows the **oneM2M standard** and supports both **HTTP** and **M
 - **Language**: Python 3.8+
 - **IoT**: [tinyIoT](https://github.com/seslabSJU/tinyIoT)
 <img width="584" height="208" alt="image" src="https://github.com/user-attachments/assets/4ae1149b-fd7f-43a2-bb53-f2e742399279" />
+
 - **MQTT Broker**: [Mosquitto](https://mosquitto.org/)
 
 ## Installation
