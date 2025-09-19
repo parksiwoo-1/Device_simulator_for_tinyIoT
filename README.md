@@ -144,7 +144,9 @@ cd tinyIoT/script   # example path
     python3 simulator.py --protocol {http or mqtt} --mode {csv or random} --frequency {seconds} --registration {1 or 0}
     
     ```
-    
+
+    <img width="1821" height="113" alt="image" src="https://github.com/user-attachments/assets/932e862a-afd7-4dac-9c85-0788134a4a13" />
+
     4.2 Separate options per sensor
     
     ```c
@@ -152,10 +154,15 @@ cd tinyIoT/script   # example path
     --sensor humid --protocol {http or mqtt} --mode {csv or random} --frequency {seconds} --registration {1 or 0}
     
     ```
-    
+
+    <img width="2048" height="56" alt="image" src="https://github.com/user-attachments/assets/08c41ce2-32c7-41ef-93f2-797152667be9" />
+
+
     4.3 Run a specific sensor only
     
     ```c
     python3 simulator.py --sensor temp --protocol {http or mqtt} --mode {csv or random} --frequency {seconds} --registration {1 or 0}
     
     ```
+
+    <img width="2029" height="49" alt="image" src="https://github.com/user-attachments/assets/36e8818a-9364-41b0-8780-41f0407cf645" />
