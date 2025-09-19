@@ -1,14 +1,7 @@
-import argparse, csv, json, random, requests, socket, string, sys, time, threading, uuid, select
-from typing import Dict, List
+import argparse, csv, json, random, requests, select, socket, string, sys, time, threading, uuid 
+from typing import Dict, List, Tuple
 import paho.mqtt.client as mqtt
-import config
-
-CONNECT_TIMEOUT       = getattr(config, 'CONNECT_TIMEOUT', 2)
-READ_TIMEOUT          = getattr(config, 'READ_TIMEOUT', 10)
-CNT_MNI               = getattr(config, 'CNT_MNI', 1000)
-CNT_MBS               = getattr(config, 'CNT_MBS', 10485760)
-RETRY_WAIT_SECONDS    = getattr(config, 'RETRY_WAIT_SECONDS', 5)
-SEND_ERROR_THRESHOLD  = getattr(config, 'SEND_ERROR_THRESHOLD', 5)
+import config_sim as config
 
 HTTP = requests.Session()
 
@@ -24,6 +17,7 @@ class Headers:
         if content_type:
             self.headers['Content-Type'] = f'application/json;ty={self.get_content_type(content_type)}'
     @staticmethod
+    
     def get_content_type(content_type):
         return {'ae': 2, 'cnt': 3, 'cin': 4}.get(content_type)
 
@@ -55,12 +49,12 @@ SENSORS: Dict[str, Dict] = {
         "api": "N.humid",
         "origin": "ChumidSensor",
     },
-}                                                                                               
+}
 
 def now_ns() -> int: return time.monotonic_ns()
 
 def wait_until_ns(target_ns: int):
-    SPIN_NS = 500_000  
+    SPIN_NS = 500_000
     while True:
         rem = target_ns - now_ns()
         if rem <= 0: return
@@ -72,23 +66,23 @@ def wait_until_ns(target_ns: int):
 
 class Alternator:
     def __init__(self, order: List[str]):
-        self.order = order[:]                 
+        self.order = order[:]
         self.idx = 0
-        self.cond = threading.Condition()                          
+        self.cond = threading.Condition()
         self.started = False
-
+    
     def start(self):
         with self.cond:
             self.started = True
             self.cond.notify_all()
-
+    
     def wait_turn(self, name: str):
         with self.cond:
             while not self.started:
                 self.cond.wait()
             while self.order[self.idx] != name:
                 self.cond.wait()
-
+    
     def done(self):
         with self.cond:
             self.idx = (self.idx + 1) % len(self.order)
@@ -96,14 +90,14 @@ class Alternator:
 
 def check_http_reachable():
     try:
-        with socket.create_connection((config.HTTP_HOST, int(config.HTTP_PORT)), timeout=CONNECT_TIMEOUT):
+        with socket.create_connection((config.HTTP_HOST, int(config.HTTP_PORT)), timeout=config.CONNECT_TIMEOUT):
             return True
     except Exception:
         return False
 
 def request_post(url, headers, body, kind=""):
     try:
-        r = HTTP.post(url, headers=headers, json=body, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+        r = HTTP.post(url, headers=headers, json=body, timeout=(config.CONNECT_TIMEOUT, config.READ_TIMEOUT))
         if r.status_code in (200, 201):
             return True
         x_rsc = str(r.headers.get('X-M2M-RSC', r.headers.get('x-m2m-rsc', ''))).strip()
@@ -129,7 +123,7 @@ def request_post(url, headers, body, kind=""):
 def get_latest_con(ae, cnt):
     la = f"{url_cnt(ae, cnt)}/la"
     try:
-        r = HTTP.get(la, headers=GET_HEADERS, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+        r = HTTP.get(la, headers=GET_HEADERS, timeout=(config.CONNECT_TIMEOUT, config.READ_TIMEOUT))
         if r.status_code == 200:
             js = r.json()
             return js.get('m2m:cin', {}).get('con')
@@ -142,7 +136,7 @@ def send_cin_http(ae, cnt, value):
     body = {"m2m:cin": {"con": value}}
     u = url_cnt(ae, cnt)
     try:
-        r = HTTP.post(u, headers=hdr, json=body, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+        r = HTTP.post(u, headers=hdr, json=body, timeout=(config.CONNECT_TIMEOUT, config.READ_TIMEOUT))
         if r.status_code in (200, 201):
             return True
         try:
@@ -178,7 +172,7 @@ def ensure_registration_http_postonly(ae, cnt, api) -> bool:
                        {"m2m:ae": {"rn": ae, "api": api, "rr": True}}, "ae")
     if not ok1: return False
     ok2 = request_post(url_ae(ae), Headers('cnt', origin=ae).headers,
-                       {"m2m:cnt": {"rn": cnt, "mni": CNT_MNI, "mbs": CNT_MBS}}, "cnt")
+                       {"m2m:cnt": {"rn": cnt, "mni": config.CNT_MNI, "mbs": config.CNT_MBS}}, "cnt")
     return ok2
 
 class MqttOneM2MClient:
@@ -188,25 +182,22 @@ class MqttOneM2MClient:
         self.origin = origin
         self.cse_csi = cse_csi
         self.cse_rn = cse_rn
-
         self.response_received = threading.Event()
         self.last_response = None
-
         print(f"[MQTT] Using module file: {__file__}")
-
         self.client = mqtt.Client()
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
         self.req_topic = f"/oneM2M/req/{self.origin}/{self.cse_csi}/json"
         self.resp_topic = f"/oneM2M/resp/{self.origin}/{self.cse_csi}/json"
-
+    
     def on_connect(self, client, userdata, flags, rc):
         print("[MQTT] Connection successful." if rc == 0 else f"[MQTT] Connection failed: rc={rc}")
-
+    
     def on_disconnect(self, client, userdata, rc):
         print(f"[MQTT] Disconnected rc={rc}")
-
+    
     def on_message(self, client, userdata, msg):
         try:
             print(f"[MQTT] [RECV] Topic: {msg.topic}")
@@ -216,7 +207,7 @@ class MqttOneM2MClient:
             self.response_received.set()
         except Exception as e:
             print(f"[ERROR] Failed to parse MQTT response: {e}")
-
+    
     def connect(self):
         try:
             self.client.connect(self.broker, self.port, keepalive=60)
@@ -228,14 +219,14 @@ class MqttOneM2MClient:
         except Exception as e:
             print(f"[ERROR] Failed to connect to MQTT broker: {e}")
             return False
-
+    
     def disconnect(self):
         try:
             self.client.loop_stop()
         finally:
             self.client.disconnect()
         print("[MQTT] Disconnected.")
-
+    
     def _send_request(self, body, ok_rsc=(2000, 2001, 2004)):
         request_id = str(uuid.uuid4())
         message = {
@@ -247,16 +238,12 @@ class MqttOneM2MClient:
             "pc": body.get("pc", {}),
             "rvi": "3"
         }
-
         req_topic_with_origin = f"/oneM2M/req/{self.origin}/{self.cse_csi}/json"
-
         print(f"[MQTT] [SEND] Topic: {req_topic_with_origin}")
         print(f"[MQTT] [SEND] Payload:")
         print(json.dumps(message, indent=2, ensure_ascii=False))
-
         self.response_received.clear()
         self.client.publish(req_topic_with_origin, json.dumps(message))
-
         if self.response_received.wait(timeout=5):
             try:
                 rsc = int(self.last_response.get("rsc", 0))
@@ -265,7 +252,7 @@ class MqttOneM2MClient:
             return rsc in ok_rsc
         print("[ERROR] No MQTT response received within timeout.")
         return False
-
+    
     def create_ae(self, ae_name):
         ok = self._send_request({
             "to": f"{self.cse_rn}",
@@ -278,7 +265,7 @@ class MqttOneM2MClient:
         elif ok and self.last_response and str(self.last_response.get("rsc")) == "4105":
             print("[MQTT] AE already exists. Proceeding.")
         return ok
-
+    
     def create_cnt(self, ae_name, cnt_name):
         ok = self._send_request({
             "to": f"{self.cse_rn}/{ae_name}",
@@ -291,7 +278,7 @@ class MqttOneM2MClient:
         elif ok and self.last_response and str(self.last_response.get("rsc")) == "4105":
             print("[MQTT] CNT already exists. Proceeding.")
         return ok
-
+    
     def send_cin(self, ae_name, cnt_name, value):
         ok = self._send_request({
             "to": f"{self.cse_rn}/{ae_name}/{cnt_name}",
@@ -316,7 +303,7 @@ class SensorWorker(threading.Thread):
         self.csv_data, self.csv_index, self.err = [], 0, 0
         self.mqtt = None
         self.alternator = alternator
-
+    
     def setup(self):
         if self.protocol == 'http':
             if not check_http_reachable():
@@ -330,7 +317,6 @@ class SensorWorker(threading.Thread):
             if self.registration == 1:
                 if not self.mqtt.create_ae(self.meta["ae"]):  raise SystemExit(1)
                 if not self.mqtt.create_cnt(self.meta["ae"], self.meta["cnt"]): raise SystemExit(1)
-
         if self.mode == 'csv':
             path = self.meta.get("csv")
             if not path:
@@ -344,14 +330,14 @@ class SensorWorker(threading.Thread):
                 print(f"[{self.name.upper()}][ERROR] CSV open failed: {e}"); raise SystemExit(1)
             if not self.csv_data:
                 print(f"[{self.name.upper()}][ERROR] CSV empty."); raise SystemExit(1)
-
+    
     def stop(self): self.stop_flag.set()
-
+    
     def _next_value(self):
         if self.mode == 'csv':
             v = self.csv_data[self.csv_index]; self.csv_index += 1; return v
         return generate_random_value_from_profile(self.meta["profile"])
-
+    
     def run(self):
         print(f"[{self.name.upper()}] run (protocol={self.protocol}, mode={self.mode}, period={self.period_ns/1e9}s)")
         t_next = now_ns() + self.period_ns
@@ -365,51 +351,43 @@ class SensorWorker(threading.Thread):
                     except Exception:
                         pass
                     break
-
                 value = self._next_value()
                 ok = send_cin_http(self.meta["ae"], self.meta["cnt"], value) if self.protocol=='http' else self.mqtt.send_cin(self.meta["ae"], self.meta["cnt"], value)
-
                 if ok:
                     print(f"[{self.name.upper()}] Sent: {value}"); self.err = 0
                 else:
                     self.err += 1
-                    print(f"[{self.name.upper()}][ERROR] send failed: {value} (retry in {RETRY_WAIT_SECONDS}s)")
-                    wait_until_ns(now_ns() + int(RETRY_WAIT_SECONDS*1e9))
-                    if self.err >= SEND_ERROR_THRESHOLD:
+                    print(f"[{self.name.upper()}][ERROR] send failed: {value} (retry in {config.RETRY_WAIT_SECONDS}s)")
+                    wait_until_ns(now_ns() + int(config.RETRY_WAIT_SECONDS * 1e9))
+                    if self.err >= config.SEND_ERROR_THRESHOLD:
                         print(f"[{self.name.upper()}][ERROR] repeated failures. stop.")
                         self.alternator.done()
                         break
-
                 if self.mode == 'csv' and self.csv_index >= len(self.csv_data):
                     print(f"[{self.name.upper()}] CSV done. stop.")
                     self.alternator.done()
                     break
-
                 self.alternator.done()
                 t_next += self.period_ns
-        
         finally:
             if self.mqtt:
                 try: self.mqtt.disconnect()
                 except Exception: pass
             print(f"[{self.name.upper()}] stopped.")
 
-def run_all_sensors(protocol, mode, frequency, registration):
-    sensor_names = list(SENSORS.keys())
+def run_all_sensors(sensor_confs: List[Tuple[str, str, str, float, int]]):
+    sensor_names = [name for (name, *_rest) in sensor_confs]
     alternator = Alternator(order=sensor_names)
-
     workers = []
     try:
-        for name in sensor_names:
+        for (name, protocol, mode, frequency, registration) in sensor_confs:
             w = SensorWorker(name, protocol, mode, frequency, registration, alternator)
             w.setup()
             workers.append(w)
-
         alternator.start()
         for w in workers: w.start()
         for w in workers: w.join()
-   
-    except KeyboardInterrupt:       
+    except KeyboardInterrupt:
         for w in workers:
             w.stop()
         try:
@@ -424,17 +402,63 @@ def run_all_sensors(protocol, mode, frequency, registration):
             except Exception:
                 pass
 
+def _parse_blocks(argv: List[str]) -> List[Tuple[str, str, str, float, int]]:
+    i = 0
+    blocks = []
+    current = None
+    def flush_current():
+        nonlocal current, blocks
+        if current is None: return
+        required = ['name', 'protocol', 'mode', 'frequency', 'registration']
+        missing = [k for k in required if k not in current]
+        if missing:
+            raise SystemExit(f"[CLI][ERROR] Missing options for sensor '{current.get('name','?')}'. Required: {', '.join(required)}")
+        blocks.append((current['name'], current['protocol'], current['mode'], float(current['frequency']), int(current['registration'])))
+        current = None
+    while i < len(argv):
+        tok = argv[i]
+        if tok == '--sensor':
+            flush_current()
+            if i+1 >= len(argv):
+                raise SystemExit("[CLI][ERROR] --sensor requires a value (temp|humid)")
+            name = argv[i+1].lower()
+            if name not in SENSORS:
+                raise SystemExit(f"[CLI][ERROR] Unknown sensor '{name}'. Choose from: {', '.join(SENSORS.keys())}")
+            current = {'name': name}
+            i += 2
+            continue
+        if current is not None and tok in ('--protocol','--mode','--frequency','--registration'):
+            if i+1 >= len(argv):
+                raise SystemExit(f"[CLI][ERROR] {tok} requires a value")
+            val = argv[i+1]
+            key = tok.lstrip('-')
+            current[key] = val
+            i += 2
+            continue
+        i += 1
+    flush_current()
+    return blocks
+
 def parse_args(argv):
+    if '--sensor' in argv:
+        blocks = _parse_blocks(argv)
+        if not blocks:
+            raise SystemExit("[CLI][ERROR] No valid sensor blocks parsed after --sensor.")
+        return {'mode': 'per-sim', 'blocks': blocks}
     p = argparse.ArgumentParser()
     p.add_argument('--protocol', choices=['http','mqtt'], required=True)
     p.add_argument('--mode', choices=['csv','random'], required=True)
-    p.add_argument('--frequency', type=float, required=True)   # seconds
+    p.add_argument('--frequency', type=float, required=True)
     p.add_argument('--registration', type=int, choices=[0,1], required=True)
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    blocks = []
+    for name in SENSORS.keys():
+        blocks.append((name, args.protocol, args.mode, float(args.frequency), int(args.registration)))
+    return {'mode': 'unified', 'blocks': blocks}
 
 def main():
-    a = parse_args(sys.argv[1:])
-    run_all_sensors(a.protocol, a.mode, a.frequency, a.registration)
+    parsed = parse_args(sys.argv[1:])
+    run_all_sensors(parsed['blocks'])
 
 if __name__ == '__main__':
     main()
