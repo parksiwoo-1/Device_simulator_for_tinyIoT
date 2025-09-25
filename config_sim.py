@@ -1,4 +1,4 @@
-"""Configuration for the oneM2M simulator (HTTP/MQTT endpoints and sensors)."""
+"""Configuration for the oneM2M device simulator (HTTP/MQTT endpoints and sensors)."""
 
 # oneM2M CSE identity used by both transports
 CSE_NAME = "tinyiot"  # csi (used in MQTT topic)
@@ -118,3 +118,4 @@ SOIL_PROFILE = {
     "min": 20,
     "max": 60,
 }
+
