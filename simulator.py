@@ -626,7 +626,7 @@ class SensorWorker:
 
                 if ok:
                     tag = self.sensor_name.upper()
-                    print(f"[{tag}] Sent value: {value}")
+                    print(f"[{tag}] Sent value: {value}\n")
                     self.err = 0
                 else:
                     self.err += 1
