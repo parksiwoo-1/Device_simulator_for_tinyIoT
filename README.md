@@ -131,10 +131,10 @@ git clone https://github.com/parksiwoo-1/Coordination_script_and_Device_simulato
 ```
 
 3. Setting
-   - Modify the contents of config_sim.py shown in the image below to suit your needs.
-  <img width="675" height="157" alt="image" src="https://github.com/user-attachments/assets/24d65372-75af-45b0-82e2-5ecf8468ba6a" /> 
-  <img width="665" height="463" alt="image" src="https://github.com/user-attachments/assets/79af566b-066e-4f91-8c09-b2b434e60415" />
-  <img width="827" height="777" alt="image" src="https://github.com/user-attachments/assets/2af7587c-e3d7-4402-a77f-d72329e34e32" />
+- Modify the contents of config_sim.py shown in the image below to suit your needs.
+<img width="675" height="157" alt="image" src="https://github.com/user-attachments/assets/24d65372-75af-45b0-82e2-5ecf8468ba6a" /> 
+<img width="665" height="463" alt="image" src="https://github.com/user-attachments/assets/79af566b-066e-4f91-8c09-b2b434e60415" />
+<img width="827" height="777" alt="image" src="https://github.com/user-attachments/assets/2af7587c-e3d7-4402-a77f-d72329e34e32" />
 
 
 5. Move to the cloned directory
