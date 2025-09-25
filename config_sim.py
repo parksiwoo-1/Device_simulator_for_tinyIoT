@@ -118,4 +118,3 @@ SOIL_PROFILE = {
     "min": 20,
     "max": 60,
 }
-
