@@ -136,8 +136,10 @@ cd tinyIoT/script   # example path
 
 ```
 
-4. Run (For detailed explanations of each option, please refer to the Features section above.)
+4. Run
 
 ```bash
 python3 simulator.py --sensor {sensor} --protocol {http / mqtt} --mode {csv / random} --frequency {seconds} --registration {1 / 0}
 ```
+
+- For detailed explanations of each option, please refer to the Features section above.
