@@ -65,11 +65,11 @@ pip install paho-mqtt
 ```
 
 - tinyIoT `config.h` settings
-1. Make sure the following settings are correctly configured:
+1. Make sure the following settings are correctly configured (Configure the IP and port as appropriate for your setup):
 
 <img width="684" height="241" alt="image" src="https://github.com/user-attachments/assets/705a3ac5-4dec-4bbc-b35a-976ae12d600b" />
 
-1. Uncomment `#define ENABLE_MQTT`.
+2. Uncomment `#define ENABLE_MQTT`.
 
 <img width="641" height="397" alt="image" src="https://github.com/user-attachments/assets/6b856bbc-0dc7-46b9-bcd9-9a606407592f" />
 
