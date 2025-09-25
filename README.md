@@ -23,7 +23,8 @@ The simulator follows the **oneM2M standard** and supports both **HTTP** and **M
 ```bash
   https://github.com/parksiwoo-1/Coordination_scrip_for_tinyIoT
 ```
-- **Temperature and humidity simulation**
+- **Single sensor device simulation**
+- **Sensor**: Users can configure and use any sensor they want.
 - **Protocol**: Choose between **HTTP** or **MQTT**
 - **Mode**
     - `csv`: Sequentially sends data from a CSV file
