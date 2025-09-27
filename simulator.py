@@ -51,16 +51,6 @@ def _x_rsc(resp) -> Optional[int]:
         return None
 
 
-def _looks_duplicate(status_code: int, rsc: Optional[int], text: str) -> bool:
-    t = (text or "").lower()
-    return (
-        status_code == 409
-        or (rsc in (4105, 4117))  # 4105=already exists(RN), 4117=aei duplicated
-        or ("duplicat" in t)
-        or ("already exists" in t)
-    )
-
-
 def _admin_delete_with_verification(paths: List[str]) -> bool:
     """
     CAdmin으로 경로 후보들을 순차 삭제.
@@ -283,7 +273,7 @@ class MqttOneM2MClient:
             payload_txt = msg.payload.decode()
             self.last_response = json.loads(payload_txt)
             self.response_received.set()
-            print(f"[MQTT][RECV] {payload_txt}")
+            print(f"\n[MQTT][RECV] {payload_txt}", end="\n\n", flush=True)
         except Exception as e:
             print(f"[ERROR] Failed to parse MQTT response: {e}")
 
@@ -331,38 +321,6 @@ class MqttOneM2MClient:
             return "error", response
         print("[ERROR] No MQTT response within timeout.")
         return "timeout", None
-
-    def retrieve(self, path: str):
-        return self._send_request({"to": path, "op": 2}, ok_rsc=(2000,))
-
-    def delete(self, path: str):
-        return self._send_request({"to": path, "op": 4}, ok_rsc=(2002,))
-
-    def create_ae(self, ae_name: str) -> bool:
-        status, resp = self._send_request({
-            "to": f"{self.cse_rn}",
-            "op": 1,
-            "ty": 2,
-            "pc": {"m2m:ae": {"rn": ae_name, "api": "N.device", "rr": True}}
-        }, ok_rsc=(2001,))
-        if status == "ok":
-            return True
-        if resp:
-            print(f"[ERROR] AE create failed rsc={resp.get('rsc')} msg={resp}")
-        return False
-
-    def create_cnt(self, ae_name: str, cnt_name: str) -> bool:
-        status, resp = self._send_request({
-            "to": f"{self.cse_rn}/{ae_name}",
-            "op": 1,
-            "ty": 3,
-            "pc": {"m2m:cnt": {"rn": cnt_name}}
-        }, ok_rsc=(2001,))
-        if status == "ok":
-            return True
-        if resp:
-            print(f"[ERROR] CNT create failed rsc={resp.get('rsc')} msg={resp}")
-        return False
 
     def send_cin(self, ae_name: str, cnt_name: str, value):
         status, resp = self._send_request({
