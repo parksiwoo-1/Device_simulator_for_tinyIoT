@@ -273,7 +273,7 @@ class MqttOneM2MClient:
             payload_txt = msg.payload.decode()
             self.last_response = json.loads(payload_txt)
             self.response_received.set()
-            print(f"\n[MQTT][RECV] {payload_txt}", end="\n\n", flush=True)
+            print(f"\n[MQTT][RECV] {payload_txt}\n\n", end="\n\n", flush=True)
         except Exception as e:
             print(f"[ERROR] Failed to parse MQTT response: {e}")
 
