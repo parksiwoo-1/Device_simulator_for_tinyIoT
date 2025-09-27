@@ -80,10 +80,6 @@ READ_TIMEOUT = 10         # HTTP read timeout (seconds)
 RETRY_WAIT_SECONDS = 5    # wait before retry after a send failure (seconds)
 SEND_ERROR_THRESHOLD = 5  # max consecutive send failures before stopping
 
-# Operator prompt behavior when existing resources are detected
-PROMPT_TIMEOUT_SECONDS = 60  # 0 or negative waits indefinitely for user input
-SHOW_DUPLICATE_RESOURCE_TREE = True
-
 # Default oneM2M container retention limits
 CNT_MNI = 1000       # max number of instances
 CNT_MBS = 10485760   # max byte size
