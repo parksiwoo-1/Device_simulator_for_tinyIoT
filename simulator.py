@@ -23,7 +23,7 @@ class Headers:
     """Utility that assembles per-request oneM2M HTTP headers."""
 
     def __init__(self, content_type: Optional[str] = None, origin: str = "CAdmin", ri: str = "req"):
-        """Build oneM2M HTTP headers for simulator requests (content_type ae/cnt/cin, origin→X-M2M-Origin, ri→X-M2M-RI)."""
+        """Build oneM2M HTTP headers: start from defaults, set X-M2M-Origin/RI, and add Content-Type (application/json;ty=…) only when a resource type is given."""
         self.headers = dict(config.HTTP_DEFAULT_HEADERS)
         self.headers["X-M2M-Origin"] = origin
         self.headers["X-M2M-RI"] = ri
@@ -53,6 +53,15 @@ def _x_rsc(resp) -> Optional[int]:
         return int(v) if v is not None else None
     except Exception:
         return None
+    
+
+def _health_check() -> bool:
+    """Return True if the CSE root responds 200 OK once, else False."""
+    try:
+        r = HTTP.get(config.BASE_URL_RN, headers=config.HTTP_GET_HEADERS, timeout=HTTP_REQUEST_TIMEOUT)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 def _admin_delete_with_verification(paths: List[str]) -> bool:
@@ -228,6 +237,25 @@ class MqttOneM2MClient:
 
         self.req_topic = f"/oneM2M/req/{self.origin}/{self.cse_csi}/json"
         self.resp_topic = f"/oneM2M/resp/{self.origin}/{self.cse_csi}/json"
+        
+    def _update_topics(self):
+        self.req_topic = f"/oneM2M/req/{self.origin}/{self.cse_csi}/json"
+        self.resp_topic = f"/oneM2M/resp/{self.origin}/{self.cse_csi}/json"
+
+    def set_origin(self, new_origin: str):
+        """Switch origin (fr) at runtime and resubscribe to new response topic."""
+        try:
+            # Unsubscribe previous response topic if connected
+            self.client.unsubscribe(self.resp_topic)
+        except Exception:
+            pass
+        self.origin = new_origin
+        self._update_topics()
+        try:
+            self.client.subscribe(self.resp_topic, qos=0)
+            print(f"[MQTT] SWITCH ORIGIN -> {self.origin}; SUB {self.resp_topic}")
+        except Exception as e:
+            print(f"[ERROR] Failed to resubscribe with new origin: {e}")
 
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         code = getattr(reason_code, "value", reason_code)
@@ -294,6 +322,74 @@ class MqttOneM2MClient:
             return "error", response
         print("[ERROR] No MQTT response within timeout.")
         return "timeout", None
+    
+    def create_ae(self, ae_name: str, api: str) -> Tuple[bool, Optional[str]]:
+        """Create AE over MQTT; on 4105 (RN duplicate) delete via HTTP as CAdmin and retry once; return (ok, aei)."""
+        req = {
+            "to": self.cse_rn,
+            "op": 1,
+            "ty": 2,
+            "pc": {"m2m:ae": {"rn": ae_name, "api": api, "rr": True}}
+        }
+        status, resp = self._send_request(req, ok_rsc=(2001,))
+        if status == "ok":
+            aei = None
+            try:
+                aei = (resp or {}).get("pc", {}).get("m2m:ae", {}).get("aei")
+            except Exception:
+                aei = None
+            return True, (aei or self.origin)
+        if status == "error":
+            try:
+                rsc = int((resp or {}).get("rsc", 0))
+            except Exception:
+                rsc = 0
+            if rsc == 4105:
+                candidates = [url_ae(ae_name)]
+                print(f"[MQTT] AE RN duplicate -> DELETE {candidates} (as CAdmin) and retry")
+                if not _admin_delete_with_verification(candidates):
+                    return False, None
+                status2, resp2 = self._send_request(req, ok_rsc=(2001,))
+                if status2 == "ok":
+                    aei2 = None
+                    try:
+                        aei2 = (resp2 or {}).get("pc", {}).get("m2m:ae", {}).get("aei")
+                    except Exception:
+                        aei2 = None
+                    return True, (aei2 or self.origin)
+                return False, None
+            print(f"[ERROR] MQTT AE create failed rsc={rsc} msg={resp}")
+            return False, None
+        print("[ERROR] MQTT AE create timed out (no response).")
+        return False, None
+
+    def create_cnt(self, ae_name: str, cnt_name: str) -> bool:
+        """Create CNT under AE over MQTT; on 4105 delete via HTTP as CAdmin and retry once."""
+        req = {
+            "to": f"{self.cse_rn}/{ae_name}",
+            "op": 1,
+            "ty": 3,
+            "pc": {"m2m:cnt": {"rn": cnt_name}}
+        }
+        status, resp = self._send_request(req, ok_rsc=(2001,))
+        if status == "ok":
+            return True
+        if status == "error":
+            try:
+                rsc = int((resp or {}).get("rsc", 0))
+            except Exception:
+                rsc = 0
+            if rsc == 4105:
+                candidates = [url_cnt(ae_name, cnt_name)]
+                print(f"[MQTT] CNT RN duplicate -> DELETE {candidates} (as CAdmin) and retry")
+                if not _admin_delete_with_verification(candidates):
+                    return False
+                status2, _ = self._send_request(req, ok_rsc=(2001,))
+                return status2 == "ok"
+            print(f"[ERROR] MQTT CNT create failed rsc={rsc} msg={resp}")
+            return False
+        print("[ERROR] MQTT CNT create timed out (no response).")
+        return False
 
     def send_cin(self, ae_name: str, cnt_name: str, value):
         """Publish a CIN using the MQTT binding (one retry on failure)."""
@@ -381,27 +477,44 @@ class SensorWorker:
         self.stop_flag = threading.Event()
         self.csv_data, self.csv_index, self.err = [], 0, 0
         self.mqtt = None
-        self.aei: Optional[str] = None  # Stores AEI for HTTP transport
+        self.aei: Optional[str] = None 
 
     def setup(self):
         """Resolve metadata, perform optional registration, and stage data sources."""
+        if not _health_check():
+            print(f"[ERROR] CSE not reachable at {config.BASE_URL_RN}. terminate.")
+            raise SystemExit(1)
+    
         if self.protocol == "http":
             ok, aei = ensure_registration_http(
                 self.meta["ae"], self.meta["cnt"], self.meta["api"], do_register=(self.registration == 1)
             )
-            # Stop immediately when registration is mandatory but fails.
             if self.registration == 1 and not ok:
                 print("[ERROR] HTTP registration failed.")
                 raise SystemExit(1)
-            # Without registration we generate a unique Origin token per run.
             self.aei = aei or f"{self.meta['ae']}-{uuid.uuid4().hex[:8]}"
         else:
-            # MQTT path retains the legacy Origin scheme.
+            tmp_origin = f"{self.meta['ae']}-{uuid.uuid4().hex[:8]}"
             self.mqtt = MqttOneM2MClient(
-                config.MQTT_HOST, config.MQTT_PORT, self.meta["origin"], config.CSE_NAME, config.CSE_RN
+                config.MQTT_HOST, config.MQTT_PORT, tmp_origin, config.CSE_NAME, config.CSE_RN
             )
             if not self.mqtt.connect():
+                print("[ERROR] MQTT broker connect failed. terminate.")
                 raise SystemExit(1)
+            
+            if self.registration == 1:
+                print(f"[MQTT] AE create -> {self.meta['ae']}")
+                ok, aei = self.mqtt.create_ae(self.meta["ae"], self.meta["api"])
+                if not ok or not aei:
+                    print("[ERROR] MQTT AE create failed.")
+                    raise SystemExit(1)
+                self.mqtt.set_origin(aei)
+                print(f"[MQTT] CNT create -> {self.meta['ae']}/{self.meta['cnt']}")
+                if not self.mqtt.create_cnt(self.meta["ae"], self.meta["cnt"]):
+                    print("[ERROR] MQTT CNT create failed.")
+                    raise SystemExit(1)
+            else:
+                pass
 
         if self.mode == "csv":
             path = self.meta.get("csv")
@@ -441,7 +554,7 @@ class SensorWorker:
         return "0"
 
     def run(self):
-        """Main worker loop that enforces the send cadence and retry policy."""
+        """Main worker loop that enforces the send cadence; on any send failure, print error and exit."""
         print(f"[{self.sensor_name.upper()}] run (protocol={self.protocol}, mode={self.mode}, period={self.period_sec}s)")
         next_send = time.time() + self.period_sec
         try:
@@ -457,21 +570,17 @@ class SensorWorker:
                     break
 
                 value = self._next_value()
+
                 if self.protocol == "http":
                     ok = send_cin_http(self.meta["ae"], self.meta["cnt"], value, origin_aei=self.aei)
                 else:
                     ok = self.mqtt.send_cin(self.meta["ae"], self.meta["cnt"], value)
 
-                if ok:
-                    print(f"[{self.sensor_name.upper()}] Sent value: {value}\n")
-                    self.err = 0
-                else:
-                    self.err += 1
-                    print(f"[{self.sensor_name.upper()}][ERROR] send failed: {value} (retry in {config.RETRY_WAIT_SECONDS}s)")
-                    time.sleep(config.RETRY_WAIT_SECONDS)
-                    if self.err >= config.SEND_ERROR_THRESHOLD:
-                        print(f"[{self.sensor_name.upper()}][ERROR] repeated failures. stop.")
-                        break
+                if not ok:
+                    print(f"[{self.sensor_name.upper()}][ERROR] send failed: {value}. exiting.")
+                    raise SystemExit(1)
+
+                print(f"[{self.sensor_name.upper()}] Sent value: {value}\n")
 
                 if self.mode == "csv" and self.csv_index >= len(self.csv_data):
                     print(f"[{self.sensor_name.upper()}] CSV done. stop.")
@@ -485,6 +594,7 @@ class SensorWorker:
                 except Exception:
                     pass
             print(f"[{self.sensor_name.upper()}] stopped.")
+
 
 
 def parse_args(argv):
