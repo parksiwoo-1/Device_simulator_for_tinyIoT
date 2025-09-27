@@ -16,9 +16,8 @@ BASE_URL_RN = f"{HTTP_BASE}/{CSE_RN}"
 HTTP_DEFAULT_HEADERS = {
     "Accept": "application/json",
     "X-M2M-Origin": "CAdmin",
-    "X-M2M-RVI": "2a",
+    "X-M2M-RVI": "3",
     "X-M2M-RI": "req",
-    "Content-Type": "application/json",
 }
 
 # Headers for tree inspection calls (no payload type)
@@ -26,7 +25,7 @@ HTTP_DEFAULT_HEADERS = {
 HTTP_GET_HEADERS = {
     "Accept": "application/json",
     "X-M2M-Origin": "CAdmin",
-    "X-M2M-RVI": "2a",
+    "X-M2M-RVI": "3",
     "X-M2M-RI": "check",
 }
 
