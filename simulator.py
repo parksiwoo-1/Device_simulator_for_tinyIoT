@@ -17,13 +17,13 @@ import requests
 import config_sim as config
 
 HTTP = requests.Session()
-HTTP_TIMEOUT = (config.CONNECT_TIMEOUT, config.READ_TIMEOUT)
-
-
-# ---------- Common utilities ----------
+HTTP_REQUEST_TIMEOUT = (config.CONNECT_TIMEOUT, config.READ_TIMEOUT)
 
 class Headers:
+    """Utility that assembles per-request oneM2M HTTP headers."""
+
     def __init__(self, content_type: Optional[str] = None, origin: str = "CAdmin", ri: str = "req"):
+        """Build oneM2M HTTP headers for simulator requests (content_type ae/cnt/cin, origin→X-M2M-Origin, ri→X-M2M-RI)."""
         self.headers = dict(config.HTTP_DEFAULT_HEADERS)
         self.headers["X-M2M-Origin"] = origin
         self.headers["X-M2M-RI"] = ri
@@ -32,18 +32,22 @@ class Headers:
 
     @staticmethod
     def get_content_type(content_type: str):
+        """Translate logical names into numeric content type codes."""
         return config.HTTP_CONTENT_TYPE_MAP.get(content_type)
 
 
 def url_ae(ae: str) -> str:
+    """Return the absolute URL of an AE resource."""
     return f"{config.BASE_URL_RN}/{ae}"
 
 
 def url_cnt(ae: str, cnt: str) -> str:
+    """Return the absolute URL of a CNT resource under the given AE."""
     return f"{config.BASE_URL_RN}/{ae}/{cnt}"
 
 
 def _x_rsc(resp) -> Optional[int]:
+    """Extract the ``X-M2M-RSC`` response header when available."""
     try:
         v = resp.headers.get("X-M2M-RSC") or resp.headers.get("x-m2m-rsc")
         return int(v) if v is not None else None
@@ -52,49 +56,23 @@ def _x_rsc(resp) -> Optional[int]:
 
 
 def _admin_delete_with_verification(paths: List[str]) -> bool:
-    """
-    CAdmin으로 경로 후보들을 순차 삭제.
-    '성공'으로 인정: HTTP 200/202/204, 또는 X-M2M-RSC=2002.
-    모든 후보가 404면 실패 처리(요구사항).
-    """
+    """Delete as CAdmin; all targets must succeed — exit on any failure including 404."""
     hdr = Headers(origin="CAdmin").headers
-    any_ok = False
-    saw_404 = False
-    tried = []
-    for p in dict.fromkeys(paths):  # 중복 제거
-        tried.append(p)
+    for p in dict.fromkeys(paths):
         try:
-            r = HTTP.delete(p, headers=hdr, timeout=HTTP_TIMEOUT)
+            r = HTTP.delete(p, headers=hdr, timeout=HTTP_REQUEST_TIMEOUT)
             rsc = _x_rsc(r)
-            if r.status_code in (200, 202, 204) or rsc == 2002:
-                any_ok = True
-                continue
-            elif r.status_code == 404 or (r.text and "URI is invalid" in r.text):
-                saw_404 = True
-            else:
-                pass
-        except Exception:
-            pass
+            if not (r.status_code in (200, 202, 204) or rsc == 2002):
+                print(f"[ERROR] DELETE {p} -> {r.status_code} rsc={rsc} body={getattr(r, 'text', '')}")
+                sys.exit(1)
+        except Exception as exc:
+            print(f"[ERROR] DELETE {p} failed: {exc}")
+            sys.exit(1)
+    return True
 
-    if any_ok:
-        return True
-
-    if saw_404:
-        print(f"[ERROR] DELETE verification failed: all candidates not found -> {tried}")
-    else:
-        print(f"[ERROR] DELETE verification failed: all candidates denied/failed -> {tried}")
-    return False
-
-
-# ---------- HTTP oneM2M (Create/Send) ----------
 
 def http_create_ae(ae_rn: str, api: str) -> Tuple[bool, Optional[str]]:
-    """
-    사전 GET 없이 AE 생성.
-    - Origin은 매번 유니크 값으로 전송(예: CtempSensor-<uuid>) → AEI 중복 회피
-    - 응답의 m2m:ae.aei를 파싱해 반환 → 이후 요청은 반드시 AEI로 Origin을 보냄
-    - RN 중복(4105/409)이면 경로 삭제 후 1회 재생성
-    """
+    """Create AE and return AEI; on RN conflict delete existing and retry once; fallback to Origin if AEI missing."""
     unique_origin = f"{ae_rn}-{uuid.uuid4().hex[:8]}"
 
     def _try_create(origin_for_create: str):
@@ -103,33 +81,29 @@ def http_create_ae(ae_rn: str, api: str) -> Tuple[bool, Optional[str]]:
                 config.BASE_URL_RN,
                 headers=Headers("ae", origin=origin_for_create).headers,
                 json={"m2m:ae": {"rn": ae_rn, "api": api, "rr": True}},
-                timeout=HTTP_TIMEOUT,
+                timeout=HTTP_REQUEST_TIMEOUT,
             )
-            if r.status_code in (200, 201):
+            rsc_hdr = _x_rsc(r)
+            if r.status_code in (200, 201) or rsc_hdr == 2001:
                 try:
                     js = r.json()
                     aei = js.get("m2m:ae", {}).get("aei")
                 except Exception:
                     aei = None
                 if not aei:
-                    # 일부 CSE는 응답에 aei를 안 줄 수도 있으므로 RN을 임시로 쓰되, 권장되진 않음.
                     aei = origin_for_create
                 return True, aei, r
             return False, None, r
         except Exception as e:
             return False, None, e
 
-    # 1) 유니크 Origin으로 생성 시도
     ok, aei, r = _try_create(unique_origin)
     if ok:
         return True, aei
 
-    # 2) 실패 분석
     if isinstance(r, requests.Response):
         rsc = _x_rsc(r)
         body_text = r.text if hasattr(r, "text") else ""
-        # AEI 중복이라면 이미 유니크 Origin이므로 가능성 낮음 → 그대로 에러 리턴
-        # RN 중복이면 경로 삭제 후 재생성
         if r.status_code in (409,) or rsc == 4105 or "already exists" in (body_text or "").lower():
             candidates = [url_ae(ae_rn)]
             print(f"[HTTP] AE RN duplicate -> DELETE {candidates} (as CAdmin) and retry")
@@ -152,18 +126,14 @@ def http_create_ae(ae_rn: str, api: str) -> Tuple[bool, Optional[str]]:
 
 
 def http_create_cnt(ae_rn: str, cnt_rn: str, origin_aei: str) -> bool:
-    """
-    사전 GET 없이 CNT 생성.
-    - Origin은 반드시 AEI 사용.
-    - RN 중복(409/4105)이면 경로 삭제 후 1회 재생성.
-    """
+    """Create CNT under AE using origin AEI; on RN conflict delete existing and retry once; return True on success else False."""
     def _try_create():
         try:
             r = HTTP.post(
                 url_ae(ae_rn),
                 headers=Headers("cnt", origin=origin_aei).headers,
                 json={"m2m:cnt": {"rn": cnt_rn, "mni": config.CNT_MNI, "mbs": config.CNT_MBS}},
-                timeout=HTTP_TIMEOUT,
+                timeout=HTTP_REQUEST_TIMEOUT,
             )
             if r.status_code in (200, 201):
                 return True, r
@@ -200,9 +170,10 @@ def http_create_cnt(ae_rn: str, cnt_rn: str, origin_aei: str) -> bool:
 
 
 def get_latest_con(ae_rn, cnt_rn) -> Optional[str]:
+    """Fetch the latest ``cin.con`` value for the container if present."""
     la = f"{url_cnt(ae_rn, cnt_rn)}/la"
     try:
-        r = HTTP.get(la, headers=config.HTTP_GET_HEADERS, timeout=HTTP_TIMEOUT)
+        r = HTTP.get(la, headers=config.HTTP_GET_HEADERS, timeout=HTTP_REQUEST_TIMEOUT)
         if r.status_code == 200:
             js = r.json()
             return js.get("m2m:cin", {}).get("con")
@@ -212,12 +183,12 @@ def get_latest_con(ae_rn, cnt_rn) -> Optional[str]:
 
 
 def send_cin_http(ae_rn: str, cnt_rn: str, value, origin_aei: str) -> bool:
-    """CIN 전송: Origin은 반드시 AEI."""
+    """POST CIN to AE/CNT using origin AEI; success on 200/201, on timeout verify via /la and accept if stored, else False."""
     hdr = Headers(content_type="cin", origin=origin_aei).headers
     body = {"m2m:cin": {"con": value}}
     u = url_cnt(ae_rn, cnt_rn)
     try:
-        r = HTTP.post(u, headers=hdr, json=body, timeout=HTTP_TIMEOUT)
+        r = HTTP.post(u, headers=hdr, json=body, timeout=HTTP_REQUEST_TIMEOUT)
         if r.status_code in (200, 201):
             return True
         try:
@@ -236,11 +207,11 @@ def send_cin_http(ae_rn: str, cnt_rn: str, value, origin_aei: str) -> bool:
     except Exception as e:
         print(f"[ERROR] POST {u} failed: {e}")
         return False
-
-
-# ---------- MQTT (기존) ----------
+    
 
 class MqttOneM2MClient:
+    """Paho MQTT client specialized for oneM2M request/response messaging."""
+
     def __init__(self, broker, port, origin, cse_csi, cse_rn="TinyIoT"):
         self.broker = broker
         self.port = int(port)
@@ -278,6 +249,7 @@ class MqttOneM2MClient:
             print(f"[ERROR] Failed to parse MQTT response: {e}")
 
     def connect(self) -> bool:
+        """Connect to the broker, start the loop, and subscribe to the response topic."""
         try:
             self.client.connect(self.broker, self.port, keepalive=60)
             self.client.loop_start()
@@ -297,6 +269,7 @@ class MqttOneM2MClient:
         print("[MQTT] Disconnected.")
 
     def _send_request(self, body, ok_rsc=(2000, 2001, 2004)):
+        """Send a oneM2M request and block until the matching response arrives."""
         request_id = str(uuid.uuid4())
         message = {
             "fr": self.origin,
@@ -323,28 +296,33 @@ class MqttOneM2MClient:
         return "timeout", None
 
     def send_cin(self, ae_name: str, cnt_name: str, value):
-        status, resp = self._send_request({
-            "to": f"{self.cse_rn}/{ae_name}/{cnt_name}",
-            "op": 1,
-            "ty": 4,
-            "pc": {"m2m:cin": {"con": value}}
-        }, ok_rsc=(2001,))
-        if status == "ok":
-            return True
+        """Publish a CIN using the MQTT binding (one retry on failure)."""
+        attempts = 0
+        status, resp = "", None
+        while attempts < 2:
+            attempts += 1
+            status, resp = self._send_request({
+                "to": f"{self.cse_rn}/{ae_name}/{cnt_name}",
+                "op": 1,
+                "ty": 4,
+                "pc": {"m2m:cin": {"con": value}}
+            }, ok_rsc=(2001,))
+            if status == "ok":
+                return True
+            if attempts < 2:
+                print("[MQTT] CIN send failed; retrying once...")
+
         if status == "timeout":
-            print("[ERROR] No MQTT response within timeout during CIN send.")
+            print("[ERROR] No MQTT response within timeout during CIN send (after retry).")
         elif resp:
-            print(f"[ERROR] CIN send failed rsc={resp.get('rsc')} msg={resp}")
+            print(f"[ERROR] CIN send failed after retry rsc={resp.get('rsc')} msg={resp}")
+        else:
+            print("[ERROR] CIN send failed after retry (unknown response).")
         return False
 
 
 def ensure_registration_http(ae: str, cnt: str, api: str, do_register: bool) -> Tuple[bool, Optional[str]]:
-    """
-    registration=1일 때만 등록. 사전 GET 없음.
-    - AE 생성 시 유니크 Origin 사용 → AEI 수신
-    - CNT 생성/이후 CIN은 반드시 AEI로 Origin 전송
-    반환: (성공여부, aei)
-    """
+    """If do_register is True, create AE then CNT using AEI and return (True, AEI); on failure return (False, None); if skipped return (True, None)."""
     if not do_register:
         return True, None
     print(f"[HTTP] AE create -> {ae}")
@@ -357,9 +335,8 @@ def ensure_registration_http(ae: str, cnt: str, api: str, do_register: bool) -> 
     return True, aei
 
 
-# ---------- Sensor metadata ----------
-
 def build_sensor_meta(name: str) -> Dict:
+    """Return the aggregated metadata describing how a sensor should operate."""
     sensor_key = name.lower()
     upper = sensor_key.upper()
     resources = getattr(config, "SENSOR_RESOURCES", {})
@@ -390,9 +367,9 @@ def build_sensor_meta(name: str) -> Dict:
     return meta
 
 
-# ---------- Worker ----------
-
 class SensorWorker:
+    """Lifecycle manager that emits sensor readings over HTTP or MQTT."""
+
     def __init__(self, sensor_name: str, protocol: str, mode: str,
                  period_sec: float, registration: int):
         self.meta = build_sensor_meta(sensor_name)
@@ -404,21 +381,22 @@ class SensorWorker:
         self.stop_flag = threading.Event()
         self.csv_data, self.csv_index, self.err = [], 0, 0
         self.mqtt = None
-        self.aei: Optional[str] = None  # HTTP용 AEI 저장
+        self.aei: Optional[str] = None  # Stores AEI for HTTP transport
 
     def setup(self):
+        """Resolve metadata, perform optional registration, and stage data sources."""
         if self.protocol == "http":
             ok, aei = ensure_registration_http(
                 self.meta["ae"], self.meta["cnt"], self.meta["api"], do_register=(self.registration == 1)
             )
-            # registration=1 이면 등록 실패 시 종료
+            # Stop immediately when registration is mandatory but fails.
             if self.registration == 1 and not ok:
                 print("[ERROR] HTTP registration failed.")
                 raise SystemExit(1)
-            # registration=0 이면 aei가 없으므로 유니크 Origin을 임시로 사용
+            # Without registration we generate a unique Origin token per run.
             self.aei = aei or f"{self.meta['ae']}-{uuid.uuid4().hex[:8]}"
         else:
-            # MQTT 경로는 기존 유지(필요시 같은 AEI 보존 패턴 적용 가능)
+            # MQTT path retains the legacy Origin scheme.
             self.mqtt = MqttOneM2MClient(
                 config.MQTT_HOST, config.MQTT_PORT, self.meta["origin"], config.CSE_NAME, config.CSE_RN
             )
@@ -442,9 +420,11 @@ class SensorWorker:
                 raise SystemExit(1)
 
     def stop(self):
+        """Signal the worker loop to stop after the current iteration."""
         self.stop_flag.set()
 
     def _next_value(self) -> str:
+        """Return the next payload to send based on the configured mode."""
         if self.mode == "csv":
             v = self.csv_data[self.csv_index]
             self.csv_index += 1
@@ -461,6 +441,7 @@ class SensorWorker:
         return "0"
 
     def run(self):
+        """Main worker loop that enforces the send cadence and retry policy."""
         print(f"[{self.sensor_name.upper()}] run (protocol={self.protocol}, mode={self.mode}, period={self.period_sec}s)")
         next_send = time.time() + self.period_sec
         try:
@@ -469,6 +450,10 @@ class SensorWorker:
                 if remaining > 0:
                     time.sleep(remaining)
                 if self.stop_flag.is_set():
+                    break
+
+                if self.mode == "csv" and self.csv_index >= len(self.csv_data):
+                    print(f"[{self.sensor_name.upper()}] CSV done. stop.")
                     break
 
                 value = self._next_value()
@@ -502,9 +487,8 @@ class SensorWorker:
             print(f"[{self.sensor_name.upper()}] stopped.")
 
 
-# ---------- CLI ----------
-
 def parse_args(argv):
+    """Parse CLI options for the simulator entry point."""
     p = argparse.ArgumentParser(description="Single-sensor oneM2M simulator (HTTP/MQTT).")
     p.add_argument("--sensor", required=True)
     p.add_argument("--protocol", choices=["http", "mqtt"], required=True)
