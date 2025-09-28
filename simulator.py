@@ -13,6 +13,7 @@ from typing import Dict, Optional, Tuple, List
 
 import paho.mqtt.client as mqtt
 import requests
+import signal
 
 import config_sim as config
 
@@ -291,9 +292,14 @@ class MqttOneM2MClient:
 
     def disconnect(self):
         try:
+            try:
+                self.client.unsubscribe(self.resp_topic)
+            except Exception:
+                pass
             self.client.loop_stop()
-        finally:
             self.client.disconnect()
+        except Exception:
+            pass
         print("[MQTT] Disconnected.")
 
     def _send_request(self, body, ok_rsc=(2000, 2001, 2004)):
@@ -477,14 +483,31 @@ class SensorWorker:
         self.stop_flag = threading.Event()
         self.csv_data, self.csv_index, self.err = [], 0, 0
         self.mqtt = None
-        self.aei: Optional[str] = None 
+        self.aei: Optional[str] = None
+        self._signals_installed = False
+        
+    def _install_signal_handlers_once(self):
+        if self._signals_installed:
+            return
+        self._signals_installed = True
+
+        def _handler(signum, frame):
+            self.stop()
+            print(f"\n[SIM] Caught signal {signum}. Stopping...", flush=True)
+
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            try:
+                signal.signal(sig, _handler)
+            except Exception:
+                pass
 
     def setup(self):
         """Resolve metadata, perform optional registration, and stage data sources."""
         if not _health_check():
             print(f"[ERROR] CSE not reachable at {config.BASE_URL_RN}. terminate.")
             raise SystemExit(1)
-    
+        
+        self._install_signal_handlers_once()
         if self.protocol == "http":
             ok, aei = ensure_registration_http(
                 self.meta["ae"], self.meta["cnt"], self.meta["api"], do_register=(self.registration == 1)
@@ -560,8 +583,10 @@ class SensorWorker:
         try:
             while not self.stop_flag.is_set():
                 remaining = next_send - time.time()
-                if remaining > 0:
-                    time.sleep(remaining)
+                while remaining > 0 and not self.stop_flag.is_set():
+                    sleep_slice = remaining if remaining < 0.1 else 0.1
+                    time.sleep(sleep_slice)
+                    remaining = next_send - time.time()
                 if self.stop_flag.is_set():
                     break
 
@@ -594,7 +619,11 @@ class SensorWorker:
                 except Exception:
                     pass
             print(f"[{self.sensor_name.upper()}] stopped.")
-
+            
+            try:
+                HTTP.close()
+            except Exception:
+                pass
 
 
 def parse_args(argv):
@@ -617,6 +646,7 @@ def main():
         period_sec=args.frequency,
         registration=args.registration,
     )
+    worker._install_signal_handlers_once()
     worker.setup()
     try:
         worker.run()
