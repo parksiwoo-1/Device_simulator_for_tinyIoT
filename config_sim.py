@@ -91,10 +91,10 @@ CNT_MBS = 10485760   # max byte size
 
 # Default CSV fixtures used when sensors run in CSV mode
 # configure for your environment
-TEMP_CSV = "/home/parks/tinyIoT/simulator/test_data/test_data_temp.csv"
-HUMID_CSV = "/home/parks/tinyIoT/simulator/test_data/test_data_humid.csv"
-CO2_CSV = None
-SOIL_CSV = None
+TEMP_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/temperature_data.csv"
+HUMID_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/humidity_data.csv"
+CO2_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/co2_data.csv"
+SOIL_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/soil_data.csv"
 
 # Random-generation profiles for supported sensors (random mode)
 TEMP_PROFILE = {
