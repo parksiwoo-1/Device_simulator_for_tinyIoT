@@ -84,6 +84,7 @@ CONNECT_TIMEOUT = 2       # socket/connect timeout (seconds)
 READ_TIMEOUT = 10         # HTTP read timeout (seconds)
 RETRY_WAIT_SECONDS = 5    # wait before retry after a send failure (seconds)
 SEND_ERROR_THRESHOLD = 5  # max consecutive send failures before stopping
+HTTP_REQUEST_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)
 
 # Default oneM2M container retention limits
 CNT_MNI = 1000       # max number of instances
