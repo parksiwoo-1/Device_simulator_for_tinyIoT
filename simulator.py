@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import os
 import random
 import string
 import sys
@@ -54,15 +55,6 @@ def _x_rsc(resp) -> Optional[int]:
         return int(v) if v is not None else None
     except Exception:
         return None
-    
-
-def _health_check() -> bool:
-    """Return True if the CSE root responds 200 OK once, else False."""
-    try:
-        r = HTTP.get(config.BASE_URL_RN, headers=config.HTTP_GET_HEADERS, timeout=HTTP_REQUEST_TIMEOUT)
-        return r.status_code == 200
-    except Exception:
-        return False
 
 
 def _admin_delete_with_verification(paths: List[str]) -> bool:
@@ -190,6 +182,31 @@ def get_latest_con(ae_rn, cnt_rn) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def _healthcheck_once() -> bool:
+     """Try exactly once to contact the tinyIoT CSE over HTTP"""
+     url = getattr(config, "CSE_URL", None) or getattr(config, "BASE_URL_RN", None)
+     if not url:
+         return True
+     headers = getattr(
+         config,
+         "HTTP_GET_HEADERS",
+         {"X-M2M-Origin": "CAdmin", "X-M2M-RVI": "3", "X-M2M-RI": "healthcheck"},
+     )
+     ct = getattr(config, "CONNECT_TIMEOUT", 1)
+     rt = getattr(config, "READ_TIMEOUT", 1)
+     try:
+         r = HTTP.get(url, headers=headers, timeout=(ct, rt))
+         ok = (r.status_code == 200)
+         if ok:
+             print(f"[SIM] tinyIoT server is responsive at {url}.")
+         else:
+             print(f"[SIM][ERROR] tinyIoT healthcheck failed: HTTP {r.status_code} {url}")
+         return ok
+     except requests.exceptions.RequestException as e:
+         print(f"[SIM][ERROR] tinyIoT healthcheck error at {url}: {e}")
+         return False
 
 
 def send_cin_http(ae_rn: str, cnt_rn: str, value, origin_aei: str) -> bool:
@@ -503,10 +520,6 @@ class SensorWorker:
 
     def setup(self):
         """Resolve metadata, perform optional registration, and stage data sources."""
-        if not _health_check():
-            print(f"[ERROR] CSE not reachable at {config.BASE_URL_RN}. terminate.")
-            raise SystemExit(1)
-        
         self._install_signal_handlers_once()
         if self.protocol == "http":
             ok, aei = ensure_registration_http(
@@ -545,14 +558,24 @@ class SensorWorker:
                 print(f"[{self.sensor_name.upper()}][ERROR] CSV path not configured in config for '{self.sensor_name}'.")
                 raise SystemExit(1)
             try:
-                with open(path, "r") as f:
-                    rows = list(csv.reader(f))
-                    self.csv_data = [r[0].strip() for r in rows if r]
+                with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                    reader = csv.DictReader(f)
+                    if not reader.fieldnames or "value" not in [h.strip() for h in reader.fieldnames]:
+                        print(f"[{self.sensor_name.upper()}][ERROR] CSV header must include 'value' column.")
+                        raise SystemExit(1)
+                    self.csv_data = []
+                    for row in reader:
+                        try:
+                            v = str(row.get("value", "")).strip()
+                        except Exception:
+                            v = ""
+                        if v != "":
+                            self.csv_data.append(v)
             except Exception as e:
-                print(f"[{self.sensor_name.upper()}][ERROR] CSV open failed: {e}")
+                print(f"[{self.sensor_name.upper()}][ERROR] CSV open/parse failed: {e}")
                 raise SystemExit(1)
             if not self.csv_data:
-                print(f"[{self.sensor_name.upper()}][ERROR] CSV empty.")
+                print(f"[{self.sensor_name.upper()}][ERROR] CSV has no 'value' data.")
                 raise SystemExit(1)
 
     def stop(self):
@@ -639,6 +662,9 @@ def parse_args(argv):
 
 def main():
     args = parse_args(sys.argv[1:])
+    if os.getenv("SKIP_HEALTHCHECK", "0") != "1":
+        if not _healthcheck_once():
+            sys.exit(1)
     worker = SensorWorker(
         sensor_name=args.sensor,
         protocol=args.protocol,
