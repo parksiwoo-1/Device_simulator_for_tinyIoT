@@ -19,7 +19,6 @@ import signal
 import config_sim as config
 
 HTTP = requests.Session()
-HTTP_REQUEST_TIMEOUT = (config.CONNECT_TIMEOUT, config.READ_TIMEOUT)
 
 class Headers:
     """Utility that assembles per-request oneM2M HTTP headers."""
@@ -62,7 +61,7 @@ def _admin_delete_with_verification(paths: List[str]) -> bool:
     hdr = Headers(origin="CAdmin").headers
     for p in dict.fromkeys(paths):
         try:
-            r = HTTP.delete(p, headers=hdr, timeout=HTTP_REQUEST_TIMEOUT)
+            r = HTTP.delete(p, headers=hdr, timeout=(config.HTTP_REQUEST_TIMEOUT))
             rsc = _x_rsc(r)
             if not (r.status_code in (200, 202, 204) or rsc == 2002):
                 print(f"[ERROR] DELETE {p} -> {r.status_code} rsc={rsc} body={getattr(r, 'text', '')}")
@@ -83,7 +82,7 @@ def http_create_ae(ae_rn: str, api: str) -> Tuple[bool, Optional[str]]:
                 config.BASE_URL_RN,
                 headers=Headers("ae", origin=origin_for_create).headers,
                 json={"m2m:ae": {"rn": ae_rn, "api": api, "rr": True}},
-                timeout=HTTP_REQUEST_TIMEOUT,
+                timeout=(config.HTTP_REQUEST_TIMEOUT)
             )
             rsc_hdr = _x_rsc(r)
             if r.status_code in (200, 201) or rsc_hdr == 2001:
@@ -135,7 +134,7 @@ def http_create_cnt(ae_rn: str, cnt_rn: str, origin_aei: str) -> bool:
                 url_ae(ae_rn),
                 headers=Headers("cnt", origin=origin_aei).headers,
                 json={"m2m:cnt": {"rn": cnt_rn, "mni": config.CNT_MNI, "mbs": config.CNT_MBS}},
-                timeout=HTTP_REQUEST_TIMEOUT,
+                timeout=(config.HTTP_REQUEST_TIMEOUT)
             )
             if r.status_code in (200, 201):
                 return True, r
@@ -175,7 +174,7 @@ def get_latest_con(ae_rn, cnt_rn) -> Optional[str]:
     """Fetch the latest ``cin.con`` value for the container if present."""
     la = f"{url_cnt(ae_rn, cnt_rn)}/la"
     try:
-        r = HTTP.get(la, headers=config.HTTP_GET_HEADERS, timeout=HTTP_REQUEST_TIMEOUT)
+        r = HTTP.get(la, headers=config.HTTP_GET_HEADERS, timeout=(config.HTTP_REQUEST_TIMEOUT))
         if r.status_code == 200:
             js = r.json()
             return js.get("m2m:cin", {}).get("con")
@@ -215,7 +214,7 @@ def send_cin_http(ae_rn: str, cnt_rn: str, value, origin_aei: str) -> bool:
     body = {"m2m:cin": {"con": value}}
     u = url_cnt(ae_rn, cnt_rn)
     try:
-        r = HTTP.post(u, headers=hdr, json=body, timeout=HTTP_REQUEST_TIMEOUT)
+        r = HTTP.post(u, headers=hdr, json=body, timeout=(config.HTTP_REQUEST_TIMEOUT))
         if r.status_code in (200, 201):
             return True
         try:
