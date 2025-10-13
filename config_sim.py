@@ -35,17 +35,17 @@ HTTP_CONTENT_TYPE_MAP = {
 
 # Resource metadata keyed by logical sensor name.
 SENSOR_RESOURCES = {
-    "temp": {
-        "ae": "CtempSensor",
+    "temperature": {
+        "ae": "CTemperatureSensor",
         "cnt": "temperature",
-        "api": "N.temp",
-        "origin": "CtempSensor",
+        "api": "N.temperature",
+        "origin": "CTemperatureSensor",
     },
-    "humid": {
-        "ae": "ChumidSensor",
+    "humidity": {
+        "ae": "CHumiditySensor",
         "cnt": "humidity",
-        "api": "N.humid",
-        "origin": "ChumidSensor",
+        "api": "N.humidity",
+        "origin": "CHumiditySensor",
     },
     "co2": {
         "ae": "Cco2Sensor",
@@ -85,32 +85,41 @@ CNT_MNI = 1000
 CNT_MBS = 10485760
 
 # CSV fixtures used when sensors run in CSV mode.
-TEMP_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/temperature_data.csv"
-HUMID_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/humidity_data.csv"
+TEMPERATURE_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/temperature_data.csv"
+HUMIDITY_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/humidity_data.csv"
 CO2_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/co2_data.csv"
 SOIL_CSV = "/home/parks/tinyIoT/simulator/smartfarm_data/soil_data.csv"
 
 # Random data-generation profiles for supported sensors.
-TEMP_PROFILE = {
+# data_type can be set to int | float | string.
+TEMPERATURE_PROFILE = {
     "data_type": "float",
     "min": 20.0,
     "max": 35.0,
 }
 
-HUMID_PROFILE = {
+HUMIDITY_PROFILE = {
     "data_type": "float",
-    "min": 50,
-    "max": 90,
+    "min": 50.0,
+    "max": 90.0,
 }
 
 CO2_PROFILE = {
     "data_type": "float",
-    "min": 350,
-    "max": 800,
+    "min": 350.0,
+    "max": 800.0,
 }
 
 SOIL_PROFILE = {
     "data_type": "float",
-    "min": 20,
-    "max": 60,
+    "min": 20.0,
+    "max": 60.0,
+}
+
+# Default random profile when a sensor is not explicitly listed above.
+# data_type can be set to int | float | string.
+GENERIC_RANDOM_PROFILE = {
+    "data_type": "float",
+    "min": 0.0,
+    "max": 100.0,
 }
