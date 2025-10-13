@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 
 import paho.mqtt.client as mqtt
 import requests
@@ -449,6 +449,48 @@ def ensure_registration_http(ae: str, cnt: str, api: str, do_register: bool) -> 
     return True, aei
 
 
+VALID_PROFILE_TYPES = {"int", "float", "string"}
+
+
+def _validate_random_profile(sensor_key: str, profile: Any) -> Dict[str, Any]:
+    """Return a sanitized random profile, validating required fields per data type."""
+    if not isinstance(profile, dict):
+        raise ValueError(f"[{sensor_key}] Random profile must be a mapping, got {type(profile).__name__}.")
+
+    profile = dict(profile)
+    data_type = profile.get("data_type")
+    if data_type not in VALID_PROFILE_TYPES:
+        raise ValueError(f"[{sensor_key}] Unsupported data_type '{data_type}'. Allowed: {sorted(VALID_PROFILE_TYPES)}")
+
+    if data_type in {"int", "float"}:
+        try:
+            minimum = float(profile["min"])
+            maximum = float(profile["max"])
+        except KeyError as exc:
+            raise ValueError(f"[{sensor_key}] Random profile missing key: {exc.args[0]}") from exc
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"[{sensor_key}] Random profile min/max must be numeric.") from exc
+        if minimum > maximum:
+            raise ValueError(f"[{sensor_key}] Random profile min value cannot exceed max value.")
+        if data_type == "int":
+            profile["min"] = int(minimum)
+            profile["max"] = int(maximum)
+        else:
+            profile["min"] = minimum
+            profile["max"] = maximum
+
+    if data_type == "string":
+        try:
+            length = int(profile.get("length", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"[{sensor_key}] Random profile length must be an integer.") from exc
+        if length <= 0:
+            raise ValueError(f"[{sensor_key}] Random profile length must be positive.")
+        profile["length"] = length
+
+    return profile
+
+
 def build_sensor_meta(name: str) -> Dict:
     """Return the aggregated metadata describing how a sensor should operate."""
     sensor_key = name.lower()
@@ -473,11 +515,16 @@ def build_sensor_meta(name: str) -> Dict:
     meta.setdefault("api", f"N.{sensor_key}")
     meta.setdefault("origin", meta.get("ae") or f"C{sensor_key}Sensor")
 
-    meta["profile"] = meta.get(
-        "profile",
-        getattr(config, f"{upper}_PROFILE", {"data_type": "float", "min": 0, "max": 100})
-    )
-    meta["csv"] = meta.get("csv", getattr(config, f"{upper}_CSV", None))
+    if not meta.get("csv"):
+        legacy_csv = getattr(config, f"{upper}_CSV", None)
+        if legacy_csv:
+            meta["csv"] = legacy_csv
+
+    profile = meta.get("profile") or getattr(config, f"{upper}_PROFILE", None)
+    if profile is None:
+        profile = getattr(config, "GENERIC_RANDOM_PROFILE", {"data_type": "float", "min": 0.0, "max": 100.0})
+
+    meta["profile"] = _validate_random_profile(sensor_key, profile)
     return meta
 
 
@@ -486,7 +533,11 @@ class SensorWorker:
 
     def __init__(self, sensor_name: str, protocol: str, mode: str,
                  period_sec: float, registration: int):
-        self.meta = build_sensor_meta(sensor_name)
+        try:
+            self.meta = build_sensor_meta(sensor_name)
+        except ValueError as exc:
+            print(f"[ERROR] {exc}")
+            raise SystemExit(1) from exc
         self.sensor_name = sensor_name
         self.protocol = protocol
         self.mode = mode
