@@ -184,28 +184,24 @@ def get_latest_con(ae_rn, cnt_rn) -> Optional[str]:
 
 
 def _healthcheck_once() -> bool:
-     """Try exactly once to contact the tinyIoT CSE over HTTP"""
-     url = getattr(config, "CSE_URL", None) or getattr(config, "BASE_URL_RN", None)
-     if not url:
-         return True
-     headers = getattr(
-         config,
-         "HTTP_GET_HEADERS",
-         {"X-M2M-Origin": "CAdmin", "X-M2M-RVI": "3", "X-M2M-RI": "healthcheck"},
-     )
-     ct = getattr(config, "CONNECT_TIMEOUT", 1)
-     rt = getattr(config, "READ_TIMEOUT", 1)
-     try:
-         r = HTTP.get(url, headers=headers, timeout=(ct, rt))
-         ok = (r.status_code == 200)
-         if ok:
-             print(f"[SIM] tinyIoT server is responsive at {url}.")
-         else:
-             print(f"[SIM][ERROR] tinyIoT healthcheck failed: HTTP {r.status_code} {url}")
-         return ok
-     except requests.exceptions.RequestException as e:
-         print(f"[SIM][ERROR] tinyIoT healthcheck error at {url}: {e}")
-         return False
+    """Attempt a single HTTP health check against the tinyIoT CSE."""
+    url = getattr(config, "CSE_URL", None) or getattr(config, "BASE_URL_RN", None)
+    if not url:
+        return True
+    headers = config.HTTP_GET_HEADERS
+    ct = getattr(config, "CONNECT_TIMEOUT", 1)
+    rt = getattr(config, "READ_TIMEOUT", 1)
+    try:
+        r = HTTP.get(url, headers=headers, timeout=(ct, rt))
+        ok = r.status_code == 200
+        if ok:
+            print(f"[SIM] tinyIoT server is responsive at {url}.")
+        else:
+            print(f"[SIM][ERROR] tinyIoT healthcheck failed: HTTP {r.status_code} {url}")
+        return ok
+    except requests.exceptions.RequestException as e:
+        print(f"[SIM][ERROR] tinyIoT healthcheck error at {url}: {e}")
+        return False
 
 
 def send_cin_http(ae_rn: str, cnt_rn: str, value, origin_aei: str) -> bool:
@@ -233,7 +229,7 @@ def send_cin_http(ae_rn: str, cnt_rn: str, value, origin_aei: str) -> bool:
     except Exception as e:
         print(f"[ERROR] POST {u} failed: {e}")
         return False
-    
+
 
 class MqttOneM2MClient:
     """Paho MQTT client specialized for oneM2M request/response messaging."""
@@ -254,7 +250,7 @@ class MqttOneM2MClient:
 
         self.req_topic = f"/oneM2M/req/{self.origin}/{self.cse_csi}/json"
         self.resp_topic = f"/oneM2M/resp/{self.origin}/{self.cse_csi}/json"
-        
+
     def _update_topics(self):
         self.req_topic = f"/oneM2M/req/{self.origin}/{self.cse_csi}/json"
         self.resp_topic = f"/oneM2M/resp/{self.origin}/{self.cse_csi}/json"
@@ -262,7 +258,7 @@ class MqttOneM2MClient:
     def set_origin(self, new_origin: str):
         """Switch origin (fr) at runtime and resubscribe to new response topic."""
         try:
-            # Unsubscribe previous response topic if connected
+            # Unsubscribe the previous response topic if already connected.
             self.client.unsubscribe(self.resp_topic)
         except Exception:
             pass
@@ -328,7 +324,7 @@ class MqttOneM2MClient:
             "rqi": request_id,
             "ty": body.get("ty"),
             "pc": body.get("pc", {}),
-            "rvi": "3"
+            "rvi": "2a"
         }
         print(f"[MQTT][SEND] {json.dumps(message, ensure_ascii=False)}")
         self.response_received.clear()
@@ -344,7 +340,7 @@ class MqttOneM2MClient:
             return "error", response
         print("[ERROR] No MQTT response within timeout.")
         return "timeout", None
-    
+
     def create_ae(self, ae_name: str, api: str) -> Tuple[bool, Optional[str]]:
         """Create AE over MQTT; on 4105 (RN duplicate) delete via HTTP as CAdmin and retry once; return (ok, aei)."""
         req = {
@@ -501,7 +497,7 @@ class SensorWorker:
         self.mqtt = None
         self.aei: Optional[str] = None
         self._signals_installed = False
-        
+
     def _install_signal_handlers_once(self):
         if self._signals_installed:
             return
@@ -536,7 +532,7 @@ class SensorWorker:
             if not self.mqtt.connect():
                 print("[ERROR] MQTT broker connect failed. terminate.")
                 raise SystemExit(1)
-            
+
             if self.registration == 1:
                 print(f"[MQTT] AE create -> {self.meta['ae']}")
                 ok, aei = self.mqtt.create_ae(self.meta["ae"], self.meta["api"])
@@ -641,7 +637,7 @@ class SensorWorker:
                 except Exception:
                     pass
             print(f"[{self.sensor_name.upper()}] stopped.")
-            
+
             try:
                 HTTP.close()
             except Exception:
